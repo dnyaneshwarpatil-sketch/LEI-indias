@@ -1,3 +1,4 @@
+export const revalidate = 60;
 import type { Metadata } from "next"
 import { Header } from "@/components/shared/Header"
 import { Footer } from "@/components/shared/Footer"
