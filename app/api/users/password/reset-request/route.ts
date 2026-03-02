@@ -1,0 +1,106 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { pgPool } from '@/lib/pg'
+import crypto from 'crypto'
+import { log } from '@/lib/logger'
+import { csrfProtection } from '@/lib/csrf'
+import { rateLimit } from '@/lib/rate-limit'
+import { reportApiError } from '@/lib/error-reporting'
+
+const resetRequestSchema = z.object({
+  email: z.string().email('Invalid email address').toLowerCase().trim(),
+})
+
+export async function POST(req: NextRequest) {
+  // CSRF protection
+  const csrfResponse = csrfProtection(req)
+  if (csrfResponse) {
+    return csrfResponse
+  }
+
+  // Rate limiting - prevent brute force password reset requests
+  const rateLimitResponse = await rateLimit(req, { maxRequests: 5, windowSeconds: 60 })
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
+  try {
+    const json = await req.json()
+    const data = resetRequestSchema.parse(json)
+
+    // Find user by email
+    const userResult = await pgPool.query<{
+      id: string
+      email: string
+      name: string
+    }>(
+      `
+      SELECT id, email, name
+      FROM "User"
+      WHERE email = $1 AND "isActive" = true
+      LIMIT 1
+      `,
+      [data.email],
+    )
+
+    // Always return success to prevent email enumeration
+    if (userResult.rows.length === 0) {
+      return NextResponse.json({
+        message: 'If an account exists with this email, a password reset link has been sent.',
+      })
+    }
+
+    const user = userResult.rows[0]
+
+    // Generate secure reset token
+    const resetToken = crypto.randomBytes(32).toString('hex')
+    const expiresAt = new Date()
+    expiresAt.setHours(expiresAt.getHours() + 1) // Token expires in 1 hour
+
+    // Invalidate any existing unused tokens for this user
+    await pgPool.query(
+      `
+      UPDATE "PasswordResetToken"
+      SET used = true
+      WHERE "userId" = $1 AND used = false
+      `,
+      [user.id],
+    )
+
+    // Create new reset token
+    await pgPool.query(
+      `
+      INSERT INTO "PasswordResetToken" ("userId", token, "expiresAt")
+      VALUES ($1, $2, $3)
+      `,
+      [user.id, resetToken, expiresAt],
+    )
+
+    return NextResponse.json({
+      message: 'If an account exists with this email, a password reset token has been created.',
+    })
+  } catch (error: any) {
+    if (error?.name === 'ZodError') {
+      return NextResponse.json(
+        {
+          error: 'Validation failed',
+          details: error.errors?.map((e: any) => ({
+            field: e.path.join('.'),
+            message: e.message,
+          })),
+        },
+        { status: 400 },
+      )
+    }
+
+    reportApiError(error, {
+      route: 'POST /api/users/password/reset-request',
+      message: 'Password reset request error',
+    })
+
+    return NextResponse.json(
+      { error: 'Failed to process password reset request' },
+      { status: 500 },
+    )
+  }
+}

@@ -1,0 +1,93 @@
+import { z } from 'zod'
+
+// Define environment variable schema
+const envSchema = z.object({
+  // Database
+  DATABASE_URL: z.string().url('DATABASE_URL must be a valid PostgreSQL connection string'),
+  
+  // JWT
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters long'),
+  JWT_EXPIRES_IN: z.string().default('7d'),
+  
+  // Application
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
+  NEXT_PUBLIC_API_URL: z.string().url().optional(),
+  
+  // Logging
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).optional(),
+  
+  // Error Reporting (optional)
+  SENTRY_DSN: z.string().url().optional(),
+  SENTRY_ENVIRONMENT: z.string().optional(),
+  
+  // Email service is disabled - no email-related env vars needed
+  
+  // Redis (optional - for caching and rate limiting)
+  REDIS_URL: z.string().url().optional(),
+  REDIS_HOST: z.string().optional(),
+  REDIS_PORT: z.string().optional(),
+  REDIS_PASSWORD: z.string().optional(),
+  
+  // Database Connection Pool (optional - defaults provided)
+  DB_POOL_MAX: z.string().optional(),
+  DB_POOL_MIN: z.string().optional(),
+})
+
+type Env = z.infer<typeof envSchema>
+
+// Helper function to convert empty strings to undefined for optional fields
+const emptyToUndefined = (value: string | undefined): string | undefined => {
+  return value === '' ? undefined : value
+}
+
+// Validate environment variables
+function validateEnv(): Env {
+  try {
+    return envSchema.parse({
+      DATABASE_URL: process.env.DATABASE_URL,
+      JWT_SECRET: process.env.JWT_SECRET,
+      JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN,
+      NODE_ENV: process.env.NODE_ENV,
+      NEXT_PUBLIC_APP_URL: emptyToUndefined(process.env.NEXT_PUBLIC_APP_URL),
+      NEXT_PUBLIC_API_URL: emptyToUndefined(process.env.NEXT_PUBLIC_API_URL),
+      LOG_LEVEL: emptyToUndefined(process.env.LOG_LEVEL),
+      SENTRY_DSN: emptyToUndefined(process.env.SENTRY_DSN),
+      SENTRY_ENVIRONMENT: emptyToUndefined(process.env.SENTRY_ENVIRONMENT),
+      REDIS_URL: emptyToUndefined(process.env.REDIS_URL),
+      REDIS_HOST: emptyToUndefined(process.env.REDIS_HOST),
+      REDIS_PORT: emptyToUndefined(process.env.REDIS_PORT),
+      REDIS_PASSWORD: emptyToUndefined(process.env.REDIS_PASSWORD),
+      DB_POOL_MAX: emptyToUndefined(process.env.DB_POOL_MAX),
+      DB_POOL_MIN: emptyToUndefined(process.env.DB_POOL_MIN),
+    })
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const missingVars = error.errors
+        .map((err) => `${err.path.join('.')}: ${err.message}`)
+        .join('\n')
+      
+      throw new Error(
+        `❌ Invalid environment variables:\n${missingVars}\n\n` +
+        `Please check your .env file and ensure all required variables are set.`
+      )
+    }
+    throw error
+  }
+}
+
+// Validate and export environment variables
+export const env = validateEnv()
+
+// Export individual variables for convenience
+export const {
+  DATABASE_URL,
+  JWT_SECRET,
+  JWT_EXPIRES_IN,
+  NODE_ENV,
+  NEXT_PUBLIC_APP_URL,
+  NEXT_PUBLIC_API_URL,
+  LOG_LEVEL,
+  SENTRY_DSN,
+  SENTRY_ENVIRONMENT,
+} = env
